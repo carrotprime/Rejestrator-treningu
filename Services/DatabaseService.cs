@@ -1,84 +1,106 @@
-﻿using SQLite;
+using Microsoft.EntityFrameworkCore;
 using WorkoutApp.Models;
 
 namespace WorkoutApp.Services
 {
+
+    public class WorkoutDbContext : DbContext
+    {
+        public DbSet<Workout> Workouts { get; set; }
+        public DbSet<Exercise> Exercises { get; set; }
+        public DbSet<WorkoutSet> WorkoutSets { get; set; }
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            optionsBuilder.UseSqlServer(@"Server=(localdb)\mssqllocaldb;Database=WorkoutAppDb;Trusted_Connection=True;TrustServerCertificate=True;");
+        }
+    }
+
     public class DatabaseService
     {
-        private SQLiteAsyncConnection? _database;
-        private readonly string _dbPath;
+        private readonly WorkoutDbContext _context;
 
         public DatabaseService()
         {
-            _dbPath = Path.Combine(FileSystem.AppDataDirectory, "workout_db.db3");
+            _context = new WorkoutDbContext();
         }
 
         private async Task Init()
         {
-            if (_database != null) return;
+            bool created = await _context.Database.EnsureCreatedAsync();
 
-            _database = new SQLiteAsyncConnection(_dbPath);
-
-            await _database.CreateTableAsync<Workout>();
-            await _database.CreateTableAsync<Exercise>();
-            await _database.CreateTableAsync<WorkoutSet>();
-
-            if (await _database.Table<Exercise>().CountAsync() == 0)
+            if (created || !await _context.Exercises.AnyAsync())
             {
-                await _database.InsertAsync(new Exercise { Name = "Wyciskanie leżąc", MuscleGroup = "Klatka piersiowa" });
-                await _database.InsertAsync(new Exercise { Name = "Przysiad ze sztangą", MuscleGroup = "Nogi" });
-                await _database.InsertAsync(new Exercise { Name = "Podciąganie na drążku", MuscleGroup = "Plecy" });
+                _context.Exercises.AddRange(
+                    new Exercise { Name = "Wyciskanie leżąc", MuscleGroup = "Klatka piersiowa" },
+                    new Exercise { Name = "Przysiad ze sztangą", MuscleGroup = "Nogi" },
+                    new Exercise { Name = "Podciąganie na drążku", MuscleGroup = "Plecy" }
+                );
+                await _context.SaveChangesAsync();
             }
         }
 
         public async Task<List<Workout>> GetWorkoutsAsync()
         {
             await Init();
-            return await _database!.Table<Workout>().OrderByDescending(w => w.Date).ToListAsync();
+            return await _context.Workouts.OrderByDescending(w => w.Date).ToListAsync();
         }
 
         public async Task<int> SaveWorkoutAsync(Workout workout)
         {
             await Init();
-            if (workout.Id != 0) return await _database!.UpdateAsync(workout);
-            else return await _database!.InsertAsync(workout);
+            if (workout.Id != 0)
+            {
+                _context.Workouts.Update(workout);
+            }
+            else
+            {
+                await _context.Workouts.AddAsync(workout);
+            }
+            return await _context.SaveChangesAsync();
         }
 
         public async Task<int> DeleteWorkoutAsync(Workout workout)
         {
             await Init();
-            await _database!.ExecuteAsync("DELETE FROM WorkoutSet WHERE WorkoutId = ?", workout.Id);
-            return await _database!.DeleteAsync(workout);
+            var relatedSets = _context.WorkoutSets.Where(s => s.WorkoutId == workout.Id);
+            _context.WorkoutSets.RemoveRange(relatedSets);
+
+            _context.Workouts.Remove(workout);
+            return await _context.SaveChangesAsync();
         }
 
         public async Task<List<Exercise>> GetExercisesAsync()
         {
             await Init();
-            return await _database!.Table<Exercise>().ToListAsync();
+            return await _context.Exercises.ToListAsync();
         }
 
         public async Task<int> SaveExerciseAsync(Exercise exercise)
         {
             await Init();
-            return await _database!.InsertAsync(exercise);
+            await _context.Exercises.AddAsync(exercise);
+            return await _context.SaveChangesAsync();
         }
 
         public async Task SaveSetAsync(WorkoutSet set)
         {
             await Init();
-            await _database!.InsertAsync(set);
+            await _context.WorkoutSets.AddAsync(set);
+            await _context.SaveChangesAsync();
         }
 
         public async Task<List<WorkoutSet>> GetSetsForWorkoutAsync(int workoutId)
         {
             await Init();
-            return await _database!.Table<WorkoutSet>().Where(s => s.WorkoutId == workoutId).ToListAsync();
+            return await _context.WorkoutSets.Where(s => s.WorkoutId == workoutId).ToListAsync();
         }
 
         public async Task<int> DeleteSetAsync(WorkoutSet set)
         {
             await Init();
-            return await _database!.DeleteAsync(set);
+            _context.WorkoutSets.Remove(set);
+            return await _context.SaveChangesAsync();
         }
     }
 }
